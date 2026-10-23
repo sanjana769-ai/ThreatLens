@@ -4,9 +4,11 @@ import subprocess
 import sys
 from io import BytesIO
 from pathlib import Path
-
+import pandas as pd
+import plotly.express as px
 import streamlit as st
 from pypdf import PdfReader
+
 
 from document_retrieval import (
     clean_pdf_text,
@@ -123,42 +125,245 @@ else:
 st.sidebar.caption("ThreatLens MVP · Evidence-grounded AI")
 
 
+
 # ==================================================
 # OVERVIEW
 # ==================================================
 
 if page == "Overview":
 
-    st.title("ThreatLens Command Center")
+    st.title("🛡️ ThreatLens Command Center")
     st.write(
         "Investigate cybersecurity threats using hybrid retrieval, "
         "MITRE ATT&CK intelligence, and evidence-grounded AI."
     )
 
+    # ------------------------------
+    # DYNAMIC METRICS
+    # ------------------------------
+
     results = get_evaluation_results()
+    total_tests = len(results)
     passed = sum(
         item.get("passed") is True for item in results
     )
 
-    a, b, c, d = st.columns(4)
+    total_records = get_technique_count()
+    indexed_documents = (
+        1 if st.session_state.collection else 0
+    )
+    retrieved = len(st.session_state.threat_results)
 
-    a.metric("ATT&CK Records", get_technique_count())
-    b.metric(
-        "Indexed Documents",
-        1 if st.session_state.collection else 0,
-    )
-    c.metric(
-        "Retrieved Techniques",
-        len(st.session_state.threat_results),
-    )
-    d.metric(
+    col1, col2, col3, col4 = st.columns(4)
+
+    col1.metric("ATT&CK Records", f"{total_records:,}")
+    col2.metric("Indexed Documents", indexed_documents)
+    col3.metric("Retrieved Techniques", retrieved)
+    col4.metric(
         "Evaluation Pass Rate",
-        f"{passed / len(results) * 100:.0f}%"
-        if results else "—",
+        f"{passed / total_tests * 100:.0f}%"
+        if total_tests else "—",
     )
 
     st.divider()
-    st.subheader("AI Investigation Copilot")
+
+    # ------------------------------
+    # ANALYTICS DASHBOARD
+    # ------------------------------
+
+    st.subheader("📊 Security Analytics")
+
+    # Load ATT&CK techniques safely.
+    try:
+        with TECHNIQUES_FILE.open("r", encoding="utf-8") as f:
+            technique_data = json.load(f)
+
+        if isinstance(technique_data, dict):
+            if isinstance(technique_data.get("techniques"), list):
+                techniques = technique_data["techniques"]
+            else:
+                techniques = list(technique_data.values())
+        elif isinstance(technique_data, list):
+            techniques = technique_data
+        else:
+            techniques = []
+
+    except (OSError, json.JSONDecodeError):
+        techniques = []
+
+    left, right = st.columns(2)
+
+    # ------------------------------
+    # PIE CHART: TACTIC DISTRIBUTION
+    # ------------------------------
+
+    with left:
+        st.markdown("#### ATT&CK Tactic Distribution")
+
+        tactic_counts = {}
+
+        for technique in techniques:
+            if not isinstance(technique, dict):
+                continue
+
+            tactics = technique.get("tactics", [])
+
+            if isinstance(tactics, str):
+                tactics = [tactics]
+
+            if not isinstance(tactics, list):
+                continue
+
+            # Count each technique once per associated tactic.
+            for tactic in set(
+                str(t).strip()
+                for t in tactics
+                if t and str(t).strip()
+            ):
+                tactic_counts[tactic] = (
+                    tactic_counts.get(tactic, 0) + 1
+                )
+
+        if tactic_counts:
+            tactic_df = pd.DataFrame(
+                [
+                    {"Tactic": tactic, "Techniques": count}
+                    for tactic, count in tactic_counts.items()
+                ]
+            ).sort_values("Techniques", ascending=False)
+
+            pie = px.pie(
+                tactic_df,
+                names="Tactic",
+                values="Techniques",
+                hole=0.48,
+                title="Techniques by tactic",
+            )
+            pie.update_layout(
+                template="plotly_dark",
+                margin=dict(t=55, b=15, l=10, r=10),
+                legend_title_text="Tactics",
+            )
+            st.plotly_chart(pie, use_container_width=True)
+
+        else:
+            st.info(
+                "No tactic data was found in techniques.json. "
+                "Check the dataset's tactics field."
+            )
+
+    # ------------------------------
+    # BAR CHART: TOP RETRIEVED TECHNIQUES
+    # ------------------------------
+
+    with right:
+        st.markdown("#### Retrieved Techniques")
+
+        retrieved_items = st.session_state.threat_results
+
+        if retrieved_items:
+            retrieval_counts = {}
+
+            for item in retrieved_items:
+                technique_id = item.get("id", "Unknown")
+                technique_name = item.get("name", "Unnamed")
+
+                label = f"{technique_id} · {technique_name}"
+                retrieval_counts[label] = (
+                    retrieval_counts.get(label, 0) + 1
+                )
+
+            retrieval_df = pd.DataFrame(
+                [
+                    {"Technique": name, "Results": count}
+                    for name, count in retrieval_counts.items()
+                ]
+            ).sort_values("Results", ascending=True)
+
+            bar = px.bar(
+                retrieval_df.tail(10),
+                x="Results",
+                y="Technique",
+                orientation="h",
+                title="Techniques in the latest search",
+            )
+            bar.update_layout(
+                template="plotly_dark",
+                margin=dict(t=55, b=15, l=10, r=10),
+                yaxis_title="",
+                xaxis_title="Result count",
+            )
+            st.plotly_chart(bar, use_container_width=True)
+
+        else:
+            st.info(
+                "Run a search in Threat Intelligence to populate "
+                "this chart."
+            )
+
+    # ------------------------------
+    # LINE CHART: EVALUATION RESULTS
+    # ------------------------------
+
+    st.divider()
+    st.subheader("📈 Evaluation Results by Test")
+
+    if results:
+        evaluation_df = pd.DataFrame(
+            [
+                {
+                    "Test": item.get("name", f"Test {i + 1}"),
+                    "Pass rate (%)": (
+                        100 if item.get("passed") is True else 0
+                    ),
+                    "Status": (
+                        "Passed"
+                        if item.get("passed") is True
+                        else "Not passed"
+                    ),
+                }
+                for i, item in enumerate(results)
+            ]
+        )
+
+        line = px.line(
+            evaluation_df,
+            x="Test",
+            y="Pass rate (%)",
+            markers=True,
+            color="Status",
+            title="Pass/fail status of saved evaluation tests",
+            hover_data=["Status"],
+        )
+        line.update_layout(
+            template="plotly_dark",
+            margin=dict(t=55, b=100, l=10, r=10),
+            xaxis_title="Evaluation test",
+            yaxis_title="Status (%)",
+            yaxis_range=[0, 105],
+        )
+        line.update_xaxes(tickangle=-35)
+
+        st.plotly_chart(line, use_container_width=True)
+        st.caption(
+            "This chart shows the saved status of each test, "
+            "not performance over time. A historical trend requires "
+            "saving results from multiple evaluation runs."
+        )
+
+    else:
+        st.info(
+            "No evaluation results are available yet. "
+            "Open Evaluation and run the evaluation suite first."
+        )
+
+    st.divider()
+
+    # ------------------------------
+    # AI INVESTIGATION COPILOT
+    # ------------------------------
+
+    st.subheader("🔎 AI Investigation Copilot")
 
     with st.form("overview_form"):
         question = st.text_area(
@@ -178,13 +383,17 @@ if page == "Overview":
             st.session_state.threat_query = question.strip()
             st.session_state.threat_answer = None
             st.session_state.threat_results = []
-            st.session_state.navigation_target = "Threat Intelligence"
+
             st.info(
-                "Open Threat Intelligence from the sidebar and submit "
-                "your question there."
+                "Your question is ready. Open Threat Intelligence "
+                "from the sidebar and select Search and Analyze."
             )
         else:
             st.warning("Enter a question first.")
+
+    # ------------------------------
+    # WORKSPACES
+    # ------------------------------
 
     st.divider()
     st.subheader("Workspaces")
@@ -194,29 +403,28 @@ if page == "Overview":
     with left:
         st.markdown("### 📄 Document Intelligence")
         st.write(
-            "Upload reports, index PDF content, and retrieve relevant evidence."
+            "Upload reports, index PDF content, "
+            "and retrieve relevant evidence."
+        )
+
+        st.markdown("### 📊 RAG Evaluation")
+        st.write(
+            "Inspect retrieval relevance, citation validity, "
+            "and insufficient-evidence behavior."
         )
 
     with right:
         st.markdown("### 🛡️ MITRE ATT&CK Explorer")
         st.write(
-            "Discover relevant techniques, tactics, platforms, and references."
+            "Explore relevant techniques, tactics, platforms, "
+            "and source references."
         )
 
-    left, right = st.columns(2)
-
-    with left:
-        st.markdown("### 📊 RAG Evaluation")
+        st.markdown("### 🔍 Evidence-first analysis")
         st.write(
-            "Inspect retrieval relevance, citation validity, and abstention."
+            "Keep source evidence separate from "
+            "AI-generated explanations."
         )
-
-    with right:
-        st.markdown("### 🔎 Evidence-first analysis")
-        st.write(
-            "Keep source evidence separate from AI-generated explanations."
-        )
-
 
 # ==================================================
 # DOCUMENT ANALYSIS
