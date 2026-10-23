@@ -1,0 +1,10 @@
+
+streamlit
+python-dotenv
+pypdf
+sentence-transformers
+chromadb
+rank-bm25
+groq
+torch
+torchvision
