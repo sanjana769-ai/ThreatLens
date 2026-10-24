@@ -158,3 +158,15 @@ GitHub: [@sanjana769-ai](https://github.com/sanjana769-ai)
 ---
 
 *ThreatLens — Turning cybersecurity information into evidence-grounded intelligence.*
+
+## 📸 Application Screenshots
+
+### ThreatLens Command Center
+![ThreatLens Dashboard](Screenshots/dashboard.png)
+
+### Evaluation Results
+![Evaluation Results](Screenshots/Evaluation.png)
+
+### AI Investigation Copilot
+![AI Investigation Copilot](Screenshots/investigation-copilot.png)
+
